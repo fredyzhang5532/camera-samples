@@ -30,6 +30,7 @@ package com.example.android.camerax.video.fragments
 
 import android.annotation.SuppressLint
 import android.content.ContentValues
+import android.content.res.Configuration
 import java.text.SimpleDateFormat
 import android.os.Bundle
 import android.provider.MediaStore
@@ -50,8 +51,10 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.video.*
 import androidx.concurrent.futures.await
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
+import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.whenCreated
 import kotlinx.coroutines.*
 import java.util.*
@@ -97,15 +100,23 @@ class CameraFragment : Fragment() {
         val cameraProvider = ProcessCameraProvider.getInstance(requireContext()).await()
 
         val cameraSelector = getCameraSelector(cameraIndex)
-        val preview = Preview.Builder().setTargetAspectRatio(DEFAULT_ASPECT_RATIO)
-            .build().apply {
-                setSurfaceProvider(fragmentCameraBinding.previewView.surfaceProvider)
-            }
 
         // create the user required QualitySelector (video resolution): we know this is
         // supported, a valid qualitySelector will be created.
-        val qualitySelector = QualitySelector.of(
-            cameraCapabilities[cameraIndex].qualitySelector[qualitySelectorIndex])
+        val quality = cameraCapabilities[cameraIndex].qualitySelector[qualitySelectorIndex]
+        val qualitySelector = QualitySelector.of(quality)
+
+        fragmentCameraBinding.previewView.updateLayoutParams<ConstraintLayout.LayoutParams> {
+            val orientation = this@CameraFragment.resources.configuration.orientation;
+            dimensionRatio = qualitySelector.getAspectRatioString(quality,
+                (orientation == Configuration.ORIENTATION_PORTRAIT))
+        }
+        val preview = Preview.Builder()
+            .setTargetAspectRatio(qualitySelector.getAspectRatio(quality))
+            .setTargetRotation(fragmentCameraBinding.previewView.display.rotation)
+            .build().apply {
+                setSurfaceProvider(fragmentCameraBinding.previewView.surfaceProvider)
+            }
 
         // build a recorder, which can:
         //   - record video/audio to MediaStore(only shown here), File, ParcelFileDescriptor
@@ -582,6 +593,50 @@ internal class QualityMap {
             -1
         }
     }
+}
+
+/**
+ * a helper function to retrieve the aspect ratio from a QualitySelector enum.
+ */
+fun QualitySelector.getAspectRatio(quality:Int): Int {
+    if (arrayOf(QualitySelector.QUALITY_UHD,
+                QualitySelector.QUALITY_FHD,
+                QualitySelector.QUALITY_HD).contains(quality)) {
+        return AspectRatio.RATIO_16_9
+    }
+    else if (quality ==  QualitySelector.QUALITY_SD) {
+        return AspectRatio.RATIO_4_3
+    }
+    return -1;
+}
+
+/**
+ * a helper function to retrieve the aspect ratio string from a QualitySelector enum.
+ */
+fun QualitySelector.getAspectRatioString(quality:Int, portraitMode:Boolean) :String? {
+    var width:Int
+    var height:Int
+
+    if (arrayOf(QualitySelector.QUALITY_UHD,
+                QualitySelector.QUALITY_FHD,
+                QualitySelector.QUALITY_HD).contains(quality)) {
+        width = 16
+        height = 9
+    } else if (quality ==  QualitySelector.QUALITY_SD) {
+        width = 4
+        height = 3
+    } else {
+        return null
+    }
+
+    var ratioString:String
+    if (portraitMode) {
+        ratioString = "V,$height:$width"
+    } else {
+        ratioString = "H,$width:$height"
+    }
+    Log.i("QualitySelector", "Test: $ratioString")
+    return ratioString
 }
 
 /**
