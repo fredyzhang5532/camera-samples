@@ -60,12 +60,12 @@ class PermissionsFragment : Fragment() {
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
-    ): View? {
+    ): View {
         return FragmentPermissionBinding.inflate(inflater, container, false).also {
             it.permissionContainer.setOnClickListener {
                 if (hasPermissions(requireContext())) {
                     Navigation.findNavController(requireActivity(), R.id.fragment_container).navigate(
-                        PermissionsFragmentDirections.actionPermissionsFragmentToCameraFragment()
+                        PermissionsFragmentDirections.actionPermissionsToCapture()
                     )
                 } else {
                     Log.e(PermissionsFragment::class.java.simpleName,
