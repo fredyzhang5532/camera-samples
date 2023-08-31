@@ -27,9 +27,9 @@ import com.example.android.camera.utils.AutoFitSurfaceView
 import com.example.android.camera2.video.EncoderWrapper
 
 class SoftwarePipeline(width: Int, height: Int, fps: Int, filterOn: Boolean,
-        characteristics: CameraCharacteristics, encoder: EncoderWrapper,
+        dynamicRange: Long, characteristics: CameraCharacteristics, encoder: EncoderWrapper,
         viewFinder: AutoFitSurfaceView) : Pipeline(width, height, fps, filterOn,
-                characteristics, encoder, viewFinder) {
+                dynamicRange, characteristics, encoder, viewFinder) {
 
     override fun createPreviewRequest(session: CameraCaptureSession,
             previewStabilization: Boolean): CaptureRequest? {
@@ -63,7 +63,11 @@ class SoftwarePipeline(width: Int, height: Int, fps: Int, filterOn: Boolean,
         }.build()
     }
 
-    override fun getTargets(): List<Surface> {
+    override fun getPreviewTargets(): List<Surface> {
+        return listOf(viewFinder.holder.surface)
+    }
+
+    override fun getRecordTargets(): List<Surface> {
         return listOf(viewFinder.holder.surface, encoder.getInputSurface())
     }
 }

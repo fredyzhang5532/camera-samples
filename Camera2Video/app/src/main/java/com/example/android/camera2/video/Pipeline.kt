@@ -26,12 +26,13 @@ import com.example.android.camera.utils.AutoFitSurfaceView
 import com.example.android.camera2.video.EncoderWrapper
 
 abstract class Pipeline(width: Int, height: Int, fps: Int, filterOn: Boolean,
-        characteristics: CameraCharacteristics, encoder: EncoderWrapper,
+        dynamicRange: Long, characteristics: CameraCharacteristics, encoder: EncoderWrapper,
         viewFinder: AutoFitSurfaceView) {
     protected val width = width
     protected val height = height
     protected val fps = fps
     protected val filterOn = filterOn
+    protected val dynamicRange = dynamicRange
     protected val characteristics = characteristics
     protected val encoder = encoder
     protected val viewFinder = viewFinder
@@ -50,7 +51,9 @@ abstract class Pipeline(width: Int, height: Int, fps: Int, filterOn: Boolean,
 
     open public fun createResources(surface: Surface) { }
 
-    public abstract fun getTargets(): List<Surface>
+    public abstract fun getPreviewTargets(): List<Surface>
+
+    public abstract fun getRecordTargets(): List<Surface>
 
     open public fun actionDown(encoderSurface: Surface) { }
 

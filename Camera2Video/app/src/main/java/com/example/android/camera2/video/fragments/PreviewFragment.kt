@@ -25,10 +25,12 @@ import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.DynamicRangeProfiles
 import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -75,7 +77,20 @@ import kotlin.coroutines.suspendCoroutine
 
 import com.example.android.camera2.video.EncoderWrapper
 
+import java.util.concurrent.Executor
+import java.util.concurrent.RejectedExecutionException
+
 class PreviewFragment : Fragment() {
+
+    private class HandlerExecutor(handler: Handler) : Executor {
+        private val mHandler = handler
+
+        override fun execute(command: Runnable) {
+            if (!mHandler.post(command)) {
+                throw RejectedExecutionException("" + mHandler + " is shutting down");
+            }
+        }
+    }
 
     /** Android ViewBinding */
     private var _fragmentBinding: FragmentPreviewBinding? = null
@@ -84,11 +99,11 @@ class PreviewFragment : Fragment() {
 
     private val pipeline: Pipeline by lazy {
         if (args.useHardware) {
-            HardwarePipeline(args.width, args.height, args.fps, args.filterOn,
-                    characteristics, encoder, fragmentBinding.viewFinder)
+            HardwarePipeline(args.width, args.height, args.fps, args.filterOn, args.transfer,
+                    args.dynamicRange, characteristics, encoder, fragmentBinding.viewFinder)
         } else {
             SoftwarePipeline(args.width, args.height, args.fps, args.filterOn,
-                    characteristics, encoder, fragmentBinding.viewFinder)
+                    args.dynamicRange, characteristics, encoder, fragmentBinding.viewFinder)
         }
     }
 
@@ -189,24 +204,15 @@ class PreviewFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View {
         _fragmentBinding = FragmentPreviewBinding.inflate(inflater, container, false)
-        return fragmentBinding.root
-    }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        // If we're displaying HDR, set the screen brightness to maximum. Otherwise, the preview
-        // image will appear darker than video playback. It is up to the app to decide whether
-        // this is appropriate - high brightness with HDR capture may dissipate a lot of heat.
-        // In dark ambient environments, setting the brightness too high may make it uncomfortable
-        // for users to view the screen, so apps will need to calibrate this depending on their
-        // use case.
+        val window = requireActivity().getWindow()
         if (args.dynamicRange != DynamicRangeProfiles.STANDARD) {
-            val window = requireActivity().getWindow()
-            var params = window.getAttributes()
-            params.screenBrightness = 1.0f
-            window.setAttributes(params)
+            if (window.getColorMode() != ActivityInfo.COLOR_MODE_HDR) {
+                window.setColorMode(ActivityInfo.COLOR_MODE_HDR)
+            }
         }
 
-        super.onCreate(savedInstanceState)
+        return fragmentBinding.root
     }
 
     @SuppressLint("MissingPermission")
@@ -249,22 +255,6 @@ class PreviewFragment : Fragment() {
     }
 
     private fun createEncoder(): EncoderWrapper {
-        val videoEncoder = when {
-            args.dynamicRange == DynamicRangeProfiles.STANDARD -> MediaFormat.MIMETYPE_VIDEO_AVC
-            args.dynamicRange < DynamicRangeProfiles.PUBLIC_MAX -> MediaFormat.MIMETYPE_VIDEO_HEVC
-            else -> throw IllegalArgumentException("Unknown dynamic range format")
-        }
-
-        val codecProfile = when {
-            args.dynamicRange == DynamicRangeProfiles.HLG10 ->
-                    MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10
-            args.dynamicRange == DynamicRangeProfiles.HDR10 ->
-                    MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10
-            args.dynamicRange == DynamicRangeProfiles.HDR10_PLUS ->
-                    MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus
-            else -> -1
-        }
-
         var width = args.width
         var height = args.height
         var orientationHint = orientation
@@ -278,7 +268,7 @@ class PreviewFragment : Fragment() {
         }
 
         return EncoderWrapper(width, height, RECORDER_VIDEO_BITRATE, args.fps,
-                orientationHint, videoEncoder, codecProfile, outputFile)
+                args.dynamicRange, orientationHint, outputFile, args.useMediaRecorder)
     }
 
     /**
@@ -294,10 +284,10 @@ class PreviewFragment : Fragment() {
         camera = openCamera(cameraManager, args.cameraId, cameraHandler)
 
         // Creates list of Surfaces where the camera will output frames
-        val targets = pipeline.getTargets()
+        val previewTargets = pipeline.getPreviewTargets()
 
         // Start a capture session using our open camera and list of Surfaces where frames will go
-        session = createCaptureSession(camera, targets!!, cameraHandler)
+        session = createCaptureSession(camera, previewTargets, cameraHandler)
 
         // Sends the capture request as frequently as possible until the session is torn down or
         //  session.stopRepeating() is called
@@ -330,6 +320,11 @@ class PreviewFragment : Fragment() {
                         //  repeating requests without having to explicitly call
                         //  `session.stopRepeating`
                         if (previewRequest != null) {
+                            val recordTargets = pipeline.getRecordTargets()
+
+                            session.close()
+                            session = createCaptureSession(camera, recordTargets, cameraHandler)
+
                             session.setRepeatingRequest(recordRequest,
                                     object : CameraCaptureSession.CaptureCallback() {
                                 override fun onCaptureCompleted(session: CameraCaptureSession,
@@ -441,7 +436,7 @@ class PreviewFragment : Fragment() {
     private fun setupSessionWithDynamicRangeProfile(
             device: CameraDevice,
             targets: List<Surface>,
-            handler: Handler? = null,
+            handler: Handler,
             stateCallback: CameraCaptureSession.StateCallback
     ): Boolean {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -452,8 +447,9 @@ class PreviewFragment : Fragment() {
                 outputConfigs.add(outputConfig)
             }
 
-            device.createCaptureSessionByOutputConfigurations(
-                    outputConfigs, stateCallback, handler)
+            val sessionConfig = SessionConfiguration(SessionConfiguration.SESSION_REGULAR,
+                    outputConfigs, HandlerExecutor(handler), stateCallback)
+            device.createCaptureSession(sessionConfig)
             return true
         } else {
             device.createCaptureSession(targets, stateCallback, handler)
@@ -468,7 +464,7 @@ class PreviewFragment : Fragment() {
     private suspend fun createCaptureSession(
             device: CameraDevice,
             targets: List<Surface>,
-            handler: Handler? = null
+            handler: Handler
     ): CameraCaptureSession = suspendCoroutine { cont ->
         val stateCallback = object: CameraCaptureSession.StateCallback() {
             override fun onConfigured(session: CameraCaptureSession) = cont.resume(session)
